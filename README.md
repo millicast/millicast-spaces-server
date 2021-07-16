@@ -1,17 +1,35 @@
 # Install dependencies
 
-`npm i`
+```
+npm i --dev
+```
 
 
 # Debug
 
-`npm run devStart`
+```
+npm run devStart
+```
 
 Requires nodemon which you can install with 
-`npm i -g nodemon`
-
+```
+npm i -g nodemon
+```
 
 # Production
 
-`tsc --build
-node dist/index`
+Compile typescript:
+```
+npm run-script build
+```
+
+Run
+```
+npm start
+```
+
+ or
+ 
+```
+node dist/index.js
+```

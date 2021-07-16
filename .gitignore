@@ -119,3 +119,4 @@ dist
 
 # Config files
 config/config.json
+/config/local.json
