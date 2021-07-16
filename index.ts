@@ -133,12 +133,12 @@ const kickUser = (user: LoginModel) => {
 
         orderRoomUsers(room);
 
-        io.emit('rooms-form', room);
-        io.emit('room-requests-modal', room);
+        ns.emit('rooms-form', room);
+        ns.emit('room-requests-modal', room);
 
     }
 
-    io.emit('rooms-list', rooms);
+    ns.emit('rooms-list', rooms);
 
 }
 
@@ -146,7 +146,7 @@ const deleteRoom = (room: RoomModel) => {
 
     rooms = rooms.filter(f => f.Id != room.Id)
 
-    io.emit('rooms-list', rooms);
+    ns.emit('rooms-list', rooms);
 
 }
 
@@ -173,9 +173,9 @@ const orderByUserName = (userList: LoginModel[]) => {
 
 }
 
-io
-  .of(namespace)
-  .on('connection', (socket) => {
+const ns = io.of(namespace)
+
+ns.on('connection', (socket) => {
     let userAuthenticated: LoginModel = null
 
     socket.on('authenticate', (username: string, cb) => {
@@ -272,7 +272,7 @@ io
 
             cb(ResultModel.WithContent(room))
 
-            io.emit('rooms-list', rooms);
+            ns.emit('rooms-list', rooms);
 
         } catch (ex) {
             cb(ResultModel.WithError(ex.message))
@@ -312,9 +312,9 @@ io
 
             orderRoomUsers(selectedRoom);
 
-            io.emit('rooms-list', rooms);
-            io.emit('rooms-form', selectedRoom);
-            io.emit('room-requests-modal', selectedRoom);
+            ns.emit('rooms-list', rooms);
+            ns.emit('rooms-form', selectedRoom);
+            ns.emit('room-requests-modal', selectedRoom);
 
             cb(ResultModel.WithContent(null));
 
@@ -335,8 +335,8 @@ io
 
             selectedUser.pendingRequest = cancel;
 
-            io.emit('room-requests-list', selectedRoom);
-            io.emit('room-requests-modal', selectedRoom);
+            ns.emit('room-requests-list', selectedRoom);
+            ns.emit('room-requests-modal', selectedRoom);
 
             cb(ResultModel.WithContent(null));
 
@@ -380,8 +380,8 @@ io
 
             orderRoomUsers(selectedRoom);
 
-            io.emit('rooms-form', selectedRoom);
-            io.emit('room-requests-modal', selectedRoom);
+            ns.emit('rooms-form', selectedRoom);
+            ns.emit('room-requests-modal', selectedRoom);
 
             cb(ResultModel.WithContent(null));
 
