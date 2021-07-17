@@ -243,14 +243,16 @@ ns.on('connection', (socket) => {
 
         if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
         const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
-
+        const requests = [null,null];
         if(userAuthenticated.publisherToken == null && userAuthenticated.appToken == selectedRoom.OwnerId) {
-            userAuthenticated.publisherToken = await GeneratePublisherToken(roomId);
+             requests[0] = GeneratePublisherToken(roomId);
         }
         if(userAuthenticated.viewerToken == null) {
-            userAuthenticated.viewerToken = await GenerateViewerToken(roomId);
+             requests[1] = GenerateViewerToken(roomId);
         }
-
+        const tokens = await Promise.all(requests);
+        userAuthenticated.publisherToken = tokens[0];
+        userAuthenticated.viewerToken = tokens[1];
         cb(ResultModel.WithContent(userAuthenticated));
 
     })
