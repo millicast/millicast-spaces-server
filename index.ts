@@ -59,12 +59,8 @@ const port = Config.get("socket-io.port");
 const path = Config.get("socket-io.path");
 const namespace = Config.get("socket-io.namespace");
 
-const users = {}
-let rooms: RoomModel[] = []
-
-const GenerateAppToken = () => {
-    return uuid();
-}
+const users = new Map<string,LoginModel>();
+const rooms = new Map<string,RoomModel>();
 
 const GeneratePublisherToken = async (streamName) => {
 
@@ -122,7 +118,7 @@ const kickUser = (user: LoginModel) => {
     user.publisherToken = null;
     user.viewerToken = null;
 
-    for (const room of rooms) {
+    for (const [roomId,room] of rooms) {
 
         room.members = room.members.filter(f => f.id != user.id);
         room.speakers = room.speakers.filter(f => f.id != user.id);
@@ -138,15 +134,15 @@ const kickUser = (user: LoginModel) => {
 
     }
 
-    ns.emit('rooms-list', rooms);
+    ns.emit('rooms-list', rooms.values());
 
 }
 
 const deleteRoom = (room: RoomModel) => {
 
-    rooms = rooms.filter(f => f.Id != room.Id)
+    rooms.delete(room.Id)
 
-    ns.emit('rooms-list', rooms);
+    ns.emit('rooms-list', rooms.values());
 
 }
 
@@ -176,7 +172,7 @@ const orderByUserName = (userList: LoginModel[]) => {
 const ns = io.of(namespace)
 
 ns.on('connection', (socket) => {
-    let userAuthenticated: LoginModel = null
+    let user: LoginModel = null
 
     socket.on('authenticate', (username: string, cb) => {
 
@@ -185,14 +181,13 @@ ns.on('connection', (socket) => {
             if (username == null) cb(ResultModel.WithError('Missing username'))
             if (users[username] != null) cb(ResultModel.WithError('Username already registered'))
 
-            const newUser = new LoginModel()
-            newUser.user = username
-            newUser.id = GenerateAppToken()
+            user = new LoginModel()
+            user.user = username
+            user.id = socket.id
 
-            userAuthenticated = newUser
-            users[username] = newUser
+            users[username] = user;
 
-            cb(ResultModel.WithContent(newUser))
+            cb(ResultModel.WithContent(user))
 
         } catch (ex) {
             cb(ResultModel.WithError(ex.message))
@@ -202,10 +197,10 @@ ns.on('connection', (socket) => {
 
     socket.on('disconnect', () => {
 
-        if (userAuthenticated != null) {
+        if (user != null) {
 
-            kickUser(userAuthenticated);
-            delete users[userAuthenticated.user];
+            kickUser(user);
+            delete users[user.user];
 
         }
 
@@ -215,7 +210,7 @@ ns.on('connection', (socket) => {
 
         try {
 
-            cb(ResultModel.WithContent(rooms));
+            cb(ResultModel.WithContent(rooms.values()));
 
         } catch (ex) {
             cb(ResultModel.WithError(ex.message))
@@ -227,9 +222,9 @@ ns.on('connection', (socket) => {
 
         try {
 
-            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+            if (!user) cb(ResultModel.WithError('Not authenticated'))
 
-            const roomResult = rooms.filter(f => f.Id == roomId)[0];
+            const roomResult = rooms.get(roomId);
 
             cb(ResultModel.WithContent(roomResult));
 
@@ -241,19 +236,19 @@ ns.on('connection', (socket) => {
 
     socket.on('get-room-user', async (roomId: string, cb) => {
 
-        if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
-        const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
+        if (!user) cb(ResultModel.WithError('Not authenticated'))
+        const selectedRoom = rooms.get(roomId);
         const requests = [null,null];
-        if(userAuthenticated.publisherToken == null && userAuthenticated.id == selectedRoom.OwnerId) {
+        if(user.publisherToken == null && user.id == selectedRoom.OwnerId) {
              requests[0] = GeneratePublisherToken(roomId);
         }
-        if(userAuthenticated.viewerToken == null) {
+        if(user.viewerToken == null) {
              requests[1] = GenerateViewerToken(roomId);
         }
         const tokens = await Promise.all(requests);
-        userAuthenticated.publisherToken = tokens[0];
-        userAuthenticated.viewerToken = tokens[1];
-        cb(ResultModel.WithContent(userAuthenticated));
+        user.publisherToken = tokens[0];
+        user.viewerToken = tokens[1];
+        cb(ResultModel.WithContent(user));
 
     })
 
@@ -261,20 +256,20 @@ ns.on('connection', (socket) => {
 
         try {
 
-            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+            if (!user) cb(ResultModel.WithError('Not authenticated'))
 
             const room = new RoomModel()
             room.members = []
-            room.speakers = [userAuthenticated]
-            room.Id = GenerateAppToken()
-            room.OwnerId = userAuthenticated.id
+            room.speakers = [user]
+            room.Id = uuid()
+            room.OwnerId = user.id
             room.name = roomName
             room.onlySound = onlySound
-            rooms.push(room)
+            rooms.set(room.Id,room)
 
             cb(ResultModel.WithContent(room))
 
-            ns.emit('rooms-list', rooms);
+            ns.emit('rooms-list', rooms.values);
 
         } catch (ex) {
             cb(ResultModel.WithError(ex.message))
@@ -286,9 +281,9 @@ ns.on('connection', (socket) => {
 
         try {
 
-            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+            if (!user) cb(ResultModel.WithError('Not authenticated'))
 
-            kickUser(userAuthenticated);
+            kickUser(user);
 
             cb(ResultModel.WithContent(null));
 
@@ -302,19 +297,19 @@ ns.on('connection', (socket) => {
 
         try {
 
-            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+            if (!user) cb(ResultModel.WithError('Not authenticated'))
 
-            const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
+            const selectedRoom = rooms.get(roomId);
 
-            if (selectedRoom.OwnerId == userAuthenticated.id) {
-                selectedRoom.speakers.push(userAuthenticated);
+            if (selectedRoom.OwnerId == user.id) {
+                selectedRoom.speakers.push(user);
             } else {
-                selectedRoom.members.push(userAuthenticated);
+                selectedRoom.members.push(user);
             }
 
             orderRoomUsers(selectedRoom);
 
-            ns.emit('rooms-list', rooms);
+            ns.emit('rooms-list', rooms.values());
             ns.emit('rooms-form', selectedRoom);
             ns.emit('room-requests-modal', selectedRoom);
 
@@ -330,10 +325,10 @@ ns.on('connection', (socket) => {
 
         try {
 
-            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+            if (!user) cb(ResultModel.WithError('Not authenticated'))
 
-            const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
-            const selectedUser = selectedRoom.members.filter(f => f.id == userAuthenticated.id)[0] || selectedRoom.speakers.filter(f => f.id == userAuthenticated.id)[0];
+            const selectedRoom = rooms.get(roomId);
+            const selectedUser = selectedRoom.members.filter(f => f.id == user.id)[0] || selectedRoom.speakers.filter(f => f.id == user.id)[0];
 
             selectedUser.pendingRequest = cancel;
 
@@ -352,9 +347,9 @@ ns.on('connection', (socket) => {
 
         try {
 
-            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+            if (!user) cb(ResultModel.WithError('Not authenticated'))
 
-            const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
+           const selectedRoom = rooms.get(roomId);
             const selectedUser = selectedRoom.members.filter(f => f.id == usrId)[0] || selectedRoom.speakers.filter(f => f.id == usrId)[0];
 
             selectedUser.pendingRequest = false;
@@ -366,14 +361,14 @@ ns.on('connection', (socket) => {
 
                 const publisherToken = await GeneratePublisherToken(roomId);
 
-                userAuthenticated.publisherToken = publisherToken;
+                user.publisherToken = publisherToken;
                 selectedUser.publisherToken = publisherToken;
 
                 selectedRoom.speakers.push(selectedUser);
 
             } else {
 
-                userAuthenticated.publisherToken = null;
+                user.publisherToken = null;
                 selectedUser.publisherToken = null;
 
                 selectedRoom.members.push(selectedUser);
