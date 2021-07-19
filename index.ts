@@ -355,17 +355,15 @@ Util.ReadJSONFile<any>(path.join(__dirname, '../config/config.json')).then((conf
                 selectedRoom.speakers = selectedRoom.speakers.filter(f => f.appToken != selectedUser.appToken);
     
                 if (promote) {
-    
+
                     const publisherToken = await GeneratePublisherToken(roomId);
     
-                    userAuthenticated.publisherToken = publisherToken;
                     selectedUser.publisherToken = publisherToken;
     
                     selectedRoom.speakers.push(selectedUser);
     
                 } else {
     
-                    userAuthenticated.publisherToken = null;
                     selectedUser.publisherToken = null;
     
                     selectedRoom.members.push(selectedUser);
