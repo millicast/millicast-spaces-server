@@ -1,11 +1,11 @@
 import { Server } from 'socket.io'
-import { Director, Publish, View, Logger } from '@millicast/sdk'
-import Util from './util/util';
-import * as path from 'path'
+import * as Config from 'config'
+import { uuid } from 'uuidv4'
+import * as fetch from 'node-fetch'
 
 class LoginModel {
     user: string
-    appToken: string
+    id: string
     publisherToken: any
     viewerToken: any
     pendingRequest: boolean
@@ -29,7 +29,7 @@ class ResultModel<T> {
     Error: ErrorModel
     content: T
     public static WithContent<T>(obj: T): ResultModel<T> {
-        let result = new ResultModel<T>()
+        const result = new ResultModel<T>()
         result.Error = {
             HasError: false,
             Message: ''
@@ -38,7 +38,7 @@ class ResultModel<T> {
         return result
     }
     public static WithError(message: string): ResultModel<void> {
-        let result = new ResultModel<void>()
+        const result = new ResultModel<void>()
         result.Error = {
             HasError: true,
             Message: message
@@ -47,342 +47,350 @@ class ResultModel<T> {
     }
 }
 
+
 //Millicast api configurations
-Util.ReadJSONFile<any>(path.join(__dirname, '../config/config.json')).then((config) => {
+const endpoint = Config.get("endpoint");
+const accountId = Config.get("accountId");
+const publisherToken = Config.get("publisherToken");
+const viewerToken = Config.get("viewerToken");
 
-    let {endpoint, accountId, publisherToken, viewerToken} = config
+//Socket.io configuration
+const port = Config.get("socket-io.port");
+const path = Config.get("socket-io.path");
+const namespace = Config.get("socket-io.namespace");
 
-    let users = {}
-    let rooms: RoomModel[] = []
-    
-    let GenerateAppToken = () => {
-        let chars = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz1234567890"
-        for (var appToken = ''; appToken.length < 128; appToken += chars[Math.floor(Math.random() * chars.length)]);
-        return appToken
+const users = {}
+let rooms: RoomModel[] = []
+
+const GenerateAppToken = () => {
+    return uuid();
+}
+
+const GeneratePublisherToken = async (streamName) => {
+
+    //Publishing webrtc
+    const streamType = "WebRtc";
+    //Get a new token
+    const response = await fetch(`${endpoint}/api/director/publish`, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${publisherToken}`
+        },
+        body: JSON.stringify({
+            streamName, streamType
+        })
+    });
+    //Parse json
+    const body = await response.json();
+    //get token
+    return body.data;
+
+}
+
+const GenerateViewerToken = async (streamName) => {
+
+    const response = await fetch(`${endpoint}/api/director/subscribe`, {
+        method: "POST",
+        mode: "cors",
+        headers: {
+            "Content-Type": "application/json",
+            "Authorization": `Bearer ${viewerToken}`
+        },
+        body: JSON.stringify({
+            streamName, accountId
+        })
+    });
+    //Parse json
+    const body = await response.json();
+    //get token
+    return body.data;
+
+}
+
+const io = new Server(port, {
+    path: path,
+    cors: {
+        origin: ['*']
     }
-    
-    const fetch = require("node-fetch");
-    
-    let GeneratePublisherToken = async (streamName) => {
-    
-        //Publishing webrtc
-        const streamType = "WebRtc";
-        //Get a new token
-        const response = await fetch(`${endpoint}/api/director/publish`, {
-            method: "POST",
-            mode: "cors",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${publisherToken}`
-            },
-            body: JSON.stringify({
-                streamName, streamType
-            })
-        });
-        //Parse json
-        const body = await response.json();
-        //get token
-        return body.data;
-    
-    }
-    
-    let GenerateViewerToken = async (streamName) => {
-    
-        const response = await fetch(`${endpoint}/api/director/subscribe`, {
-            method: "POST",
-            mode: "cors",
-            headers: {
-                "Content-Type": "application/json",
-                "Authorization": `Bearer ${viewerToken}`
-            },
-            body: JSON.stringify({
-                streamName, accountId
-            })
-        });
-        //Parse json
-        const body = await response.json();
-        //get token
-        return body.data;
-    
-    }
-    
-    const io = new Server(3000, {
-        cors: {
-            origin: ['http://localhost:8100', 'https://millicast.fontventa.com']
+})
+
+const kickUser = (user: LoginModel) => {
+
+    user.pendingRequest = false;
+    user.publisherToken = null;
+    user.viewerToken = null;
+
+    for (const room of rooms) {
+
+        room.members = room.members.filter(f => f.id != user.id);
+        room.speakers = room.speakers.filter(f => f.id != user.id);
+
+        if (room.members.length == 0 && room.speakers.length == 0) {
+            deleteRoom(room);
         }
+
+        orderRoomUsers(room);
+
+        ns.emit('rooms-form', room);
+        ns.emit('room-requests-modal', room);
+
+    }
+
+    ns.emit('rooms-list', rooms);
+
+}
+
+const deleteRoom = (room: RoomModel) => {
+
+    rooms = rooms.filter(f => f.Id != room.Id)
+
+    ns.emit('rooms-list', rooms);
+
+}
+
+const orderRoomUsers = (room: RoomModel) => {
+
+    room.members = orderByUserName(room.members);
+    room.speakers = orderByUserName(room.speakers);
+
+}
+
+const orderByUserName = (userList: LoginModel[]) => {
+
+    return userList.sort(function (a, b) {
+
+        if (a.user > b.user) {
+            return 1;
+        }
+        if (a.user < b.user) {
+            return -1;
+        }
+
+        return 0;
+    });
+
+}
+
+const ns = io.of(namespace)
+
+ns.on('connection', (socket) => {
+    let userAuthenticated: LoginModel = null
+
+    socket.on('authenticate', (username: string, cb) => {
+
+        try {
+
+            if (username == null) cb(ResultModel.WithError('Missing username'))
+            if (users[username] != null) cb(ResultModel.WithError('Username already registered'))
+
+            const newUser = new LoginModel()
+            newUser.user = username
+            newUser.id = GenerateAppToken()
+
+            userAuthenticated = newUser
+            users[username] = newUser
+
+            cb(ResultModel.WithContent(newUser))
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
     })
-    
-    let kickUser = (user: LoginModel) => {
-    
-        user.pendingRequest = false;
-        user.publisherToken = null;
-        user.viewerToken = null;
-    
-        for (let room of rooms) {
-    
-            room.members = room.members.filter(f => f.appToken != user.appToken);
-            room.speakers = room.speakers.filter(f => f.appToken != user.appToken);
-    
-            if (room.members.length == 0 && room.speakers.length == 0) {
-                deleteRoom(room);
-            }
-    
-            orderRoomUsers(room);
-    
-            io.emit('rooms-form', room);
-            io.emit('room-requests-modal', room);
-    
+
+    socket.on('disconnect', () => {
+
+        if (userAuthenticated != null) {
+
+            kickUser(userAuthenticated);
+            delete users[userAuthenticated.user];
+
         }
-    
-        io.emit('rooms-list', rooms);
-    
-    }
-    
-    let deleteRoom = (room: RoomModel) => {
-    
-        rooms = rooms.filter(f => f.Id != room.Id)
-    
-        io.emit('rooms-list', rooms);
-    
-    }
-    
-    let orderRoomUsers = (room: RoomModel) => {
-    
-        room.members = orderByUserName(room.members);
-        room.speakers = orderByUserName(room.speakers);
-    
-    }
-    
-    let orderByUserName = (userList: LoginModel[]) => {
-    
-        return userList.sort(function (a, b) {
-    
-            if (a.user > b.user) {
-                return 1;
-            }
-            if (a.user < b.user) {
-                return -1;
-            }
-    
-            return 0;
-        });
-    
-    }
-    
-    io.on('connection', (socket) => {
-        let userAuthenticated: LoginModel = null
-    
-        socket.on('authenticate', (username: string, cb) => {
-    
-            try {
-    
-                if (username == null) cb(ResultModel.WithError('Missing username'))
-                if (users[username] != null) cb(ResultModel.WithError('Username already registered'))
-    
-                let newUser = new LoginModel()
-                newUser.user = username
-                newUser.appToken = GenerateAppToken()
-    
-                userAuthenticated = newUser
-                users[username] = newUser
-    
-                cb(ResultModel.WithContent(newUser))
-    
-            } catch (ex) {
-                cb(ResultModel.WithError(ex.message))
-            }
-    
-        })
-    
-        socket.on('disconnect', () => {
-    
-            if (userAuthenticated != null) {
-    
-                kickUser(userAuthenticated);
-                delete users[userAuthenticated.user];
-    
-            }
-    
-        })
-    
-        socket.on('get-rooms', (cb) => {
-    
-            try {
-    
-                cb(ResultModel.WithContent(rooms));
-    
-            } catch (ex) {
-                cb(ResultModel.WithError(ex.message))
-            }
-    
-        })
-    
-        socket.on('get-room-by-id', (roomId: string, cb) => {
-    
-            try {
-    
-                if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
-    
-                const roomResult = rooms.filter(f => f.Id == roomId)[0];
-    
-                cb(ResultModel.WithContent(roomResult));
-    
-            } catch (ex) {
-                cb(ResultModel.WithError(ex.message))
-            }
-    
-        })
-    
-        socket.on('get-room-user', async (roomId: string, cb) => {
-    
+
+    })
+
+    socket.on('get-rooms', (cb) => {
+
+        try {
+
+            cb(ResultModel.WithContent(rooms));
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
+    })
+
+    socket.on('get-room-by-id', (roomId: string, cb) => {
+
+        try {
+
             if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
-            let selectedRoom = rooms.filter(f => f.Id == roomId)[0];
-    
-            if(userAuthenticated.publisherToken == null && userAuthenticated.appToken == selectedRoom.OwnerId) {
-                userAuthenticated.publisherToken = await GeneratePublisherToken(roomId);
-            }
-            if(userAuthenticated.viewerToken == null) {
-                userAuthenticated.viewerToken = await GenerateViewerToken(roomId);
-            }
-    
-            cb(ResultModel.WithContent(userAuthenticated));
-    
-        })
-    
-        socket.on('create-room', (roomName: string, onlySound: boolean, cb) => {
-    
-            try {
-    
-                if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
-    
-                let room = new RoomModel()
-                room.members = []
-                room.speakers = [userAuthenticated]
-                room.Id = GenerateAppToken()
-                room.OwnerId = userAuthenticated.appToken
-                room.name = roomName
-                room.onlySound = onlySound
-                rooms.push(room)
-    
-                cb(ResultModel.WithContent(room))
-    
-                io.emit('rooms-list', rooms);
-    
-            } catch (ex) {
-                cb(ResultModel.WithError(ex.message))
-            }
-    
-        })
-    
-        socket.on('exit-rooms', (cb) => {
-    
-            try {
-    
-                if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
-    
-                kickUser(userAuthenticated);
-    
-                cb(ResultModel.WithContent(null));
-    
-            } catch (ex) {
-                cb(ResultModel.WithError(ex.message))
-            }
-    
-        })
-    
-        socket.on('join-room', (roomId: string, cb) => {
-    
-            try {
-    
-                if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
-    
-                let selectedRoom = rooms.filter(f => f.Id == roomId)[0];
-    
-                if (selectedRoom.OwnerId == userAuthenticated.appToken) {
-                    selectedRoom.speakers.push(userAuthenticated);
-                } else {
-                    selectedRoom.members.push(userAuthenticated);
-                }
-    
-                orderRoomUsers(selectedRoom);
-    
-                io.emit('rooms-list', rooms);
-                io.emit('rooms-form', selectedRoom);
-                io.emit('room-requests-modal', selectedRoom);
-    
-                cb(ResultModel.WithContent(null));
-    
-            } catch (ex) {
-                cb(ResultModel.WithError(ex.message))
-            }
-    
-        })
-    
-        socket.on('made-request', (roomId: string, cancel: boolean, cb) => {
-    
-            try {
-    
-                if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
-    
-                let selectedRoom = rooms.filter(f => f.Id == roomId)[0];
-                let selectedUser = selectedRoom.members.filter(f => f.appToken == userAuthenticated.appToken)[0] || selectedRoom.speakers.filter(f => f.appToken == userAuthenticated.appToken)[0];
-    
-                selectedUser.pendingRequest = cancel;
-    
-                io.emit('room-requests-list', selectedRoom);
-                io.emit('room-requests-modal', selectedRoom);
-    
-                cb(ResultModel.WithContent(null));
-    
-            } catch (ex) {
-                cb(ResultModel.WithError(ex.message))
-            }
-    
-        })
-    
-        socket.on('manage-request', async (roomId: string, usrId: string, promote: boolean, cb) => {
-    
-            try {
-    
-                if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
-    
-                let selectedRoom = rooms.filter(f => f.Id == roomId)[0];
-                let selectedUser = selectedRoom.members.filter(f => f.appToken == usrId)[0] || selectedRoom.speakers.filter(f => f.appToken == usrId)[0];
-    
-                selectedUser.pendingRequest = false;
-    
-                selectedRoom.members = selectedRoom.members.filter(f => f.appToken != selectedUser.appToken);
-                selectedRoom.speakers = selectedRoom.speakers.filter(f => f.appToken != selectedUser.appToken);
-    
-                if (promote) {
 
-                    const publisherToken = await GeneratePublisherToken(roomId);
-    
-                    selectedUser.publisherToken = publisherToken;
-    
-                    selectedRoom.speakers.push(selectedUser);
-    
-                } else {
-    
-                    selectedUser.publisherToken = null;
-    
-                    selectedRoom.members.push(selectedUser);
-    
-                }
-    
-                orderRoomUsers(selectedRoom);
-    
-                io.emit('rooms-form', selectedRoom);
-                io.emit('room-requests-modal', selectedRoom);
-    
-                cb(ResultModel.WithContent(null));
-    
-            } catch (ex) {
-                cb(ResultModel.WithError(ex.message))
-            }
-    
-        })
-    
+            const roomResult = rooms.filter(f => f.Id == roomId)[0];
+
+            cb(ResultModel.WithContent(roomResult));
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
     })
-    
+
+    socket.on('get-room-user', async (roomId: string, cb) => {
+
+        if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+        const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
+        const requests = [null,null];
+        if(userAuthenticated.publisherToken == null && userAuthenticated.id == selectedRoom.OwnerId) {
+             requests[0] = GeneratePublisherToken(roomId);
+        }
+        if(userAuthenticated.viewerToken == null) {
+             requests[1] = GenerateViewerToken(roomId);
+        }
+        const tokens = await Promise.all(requests);
+        userAuthenticated.publisherToken = tokens[0];
+        userAuthenticated.viewerToken = tokens[1];
+        cb(ResultModel.WithContent(userAuthenticated));
+
+    })
+
+    socket.on('create-room', (roomName: string, onlySound: boolean, cb) => {
+
+        try {
+
+            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+
+            const room = new RoomModel()
+            room.members = []
+            room.speakers = [userAuthenticated]
+            room.Id = GenerateAppToken()
+            room.OwnerId = userAuthenticated.id
+            room.name = roomName
+            room.onlySound = onlySound
+            rooms.push(room)
+
+            cb(ResultModel.WithContent(room))
+
+            ns.emit('rooms-list', rooms);
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
+    })
+
+    socket.on('exit-rooms', (cb) => {
+
+        try {
+
+            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+
+            kickUser(userAuthenticated);
+
+            cb(ResultModel.WithContent(null));
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
+    })
+
+    socket.on('join-room', (roomId: string, cb) => {
+
+        try {
+
+            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+
+            const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
+
+            if (selectedRoom.OwnerId == userAuthenticated.id) {
+                selectedRoom.speakers.push(userAuthenticated);
+            } else {
+                selectedRoom.members.push(userAuthenticated);
+            }
+
+            orderRoomUsers(selectedRoom);
+
+            ns.emit('rooms-list', rooms);
+            ns.emit('rooms-form', selectedRoom);
+            ns.emit('room-requests-modal', selectedRoom);
+
+            cb(ResultModel.WithContent(null));
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
+    })
+
+    socket.on('made-request', (roomId: string, cancel: boolean, cb) => {
+
+        try {
+
+            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+
+            const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
+            const selectedUser = selectedRoom.members.filter(f => f.id == userAuthenticated.id)[0] || selectedRoom.speakers.filter(f => f.id == userAuthenticated.id)[0];
+
+            selectedUser.pendingRequest = cancel;
+
+            ns.emit('room-requests-list', selectedRoom);
+            ns.emit('room-requests-modal', selectedRoom);
+
+            cb(ResultModel.WithContent(null));
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
+    })
+
+    socket.on('manage-request', async (roomId: string, usrId: string, promote: boolean, cb) => {
+
+        try {
+
+            if (!userAuthenticated) cb(ResultModel.WithError('Not authenticated'))
+
+            const selectedRoom = rooms.filter(f => f.Id == roomId)[0];
+            const selectedUser = selectedRoom.members.filter(f => f.id == usrId)[0] || selectedRoom.speakers.filter(f => f.id == usrId)[0];
+
+            selectedUser.pendingRequest = false;
+
+            selectedRoom.members = selectedRoom.members.filter(f => f.id != selectedUser.id);
+            selectedRoom.speakers = selectedRoom.speakers.filter(f => f.id != selectedUser.id);
+
+            if (promote) {
+
+                const publisherToken = await GeneratePublisherToken(roomId);
+
+                userAuthenticated.publisherToken = publisherToken;
+                selectedUser.publisherToken = publisherToken;
+
+                selectedRoom.speakers.push(selectedUser);
+
+            } else {
+
+                userAuthenticated.publisherToken = null;
+                selectedUser.publisherToken = null;
+
+                selectedRoom.members.push(selectedUser);
+
+            }
+
+            orderRoomUsers(selectedRoom);
+
+            ns.emit('rooms-form', selectedRoom);
+            ns.emit('room-requests-modal', selectedRoom);
+
+            cb(ResultModel.WithContent(null));
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
+    })
+
 })

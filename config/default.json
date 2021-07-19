@@ -1,0 +1,11 @@
+{
+    "endpoint": "https://director.millicast.com",
+    "accountId": "",
+    "publisherToken": "",
+    "viewerToken": "",
+    "socket-io": {
+        "port": 3000,
+        "path": "/",
+        "namespace": "/"
+    }
+}
