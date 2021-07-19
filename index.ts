@@ -134,7 +134,7 @@ const kickUser = (user: LoginModel) => {
 
     }
 
-    ns.emit('rooms-list', rooms.values());
+    ns.emit('rooms-list', Array.from(rooms.values()));
 
 }
 
@@ -142,7 +142,7 @@ const deleteRoom = (room: RoomModel) => {
 
     rooms.delete(room.Id)
 
-    ns.emit('rooms-list', rooms.values());
+    ns.emit('rooms-list', Array.from(rooms.values()));
 
 }
 
@@ -208,8 +208,8 @@ ns.on('connection', (socket) => {
     socket.on('get-rooms', (cb) => {
 
         try {
-
-            cb(ResultModel.WithContent(rooms.values()));
+        console.dir(Array.from(rooms.values()))
+            cb(ResultModel.WithContent(Array.from(rooms.values())));
 
         } catch (ex) {
             cb(ResultModel.WithError(ex.message))
@@ -267,9 +267,8 @@ ns.on('connection', (socket) => {
             rooms.set(room.Id,room)
 
             cb(ResultModel.WithContent(room))
-
-            ns.emit('rooms-list', rooms.values);
-
+            ns.emit('rooms-list', Array.from(Array.from(rooms.values())));
+            
         } catch (ex) {
             cb(ResultModel.WithError(ex.message))
         }
@@ -308,7 +307,7 @@ ns.on('connection', (socket) => {
 
             orderRoomUsers(selectedRoom);
 
-            ns.emit('rooms-list', rooms.values());
+            ns.emit('rooms-list', Array.from(rooms.values()));
             ns.emit('rooms-form', selectedRoom);
             ns.emit('room-requests-modal', selectedRoom);
 
