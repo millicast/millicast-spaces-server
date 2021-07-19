@@ -112,7 +112,7 @@ const GenerateViewerToken = async (streamName) => {
 const io = new Server(port, {
     path: path,
     cors: {
-        origin: ['*']
+        origin: ['http://localhost:8100', 'https://millicast.fontventa.com']
     }
 })
 
@@ -180,8 +180,6 @@ ns.on('connection', (socket) => {
 
     socket.on('authenticate', (username: string, cb) => {
 
-        try {
-
             if (username == null) cb(ResultModel.WithError('Missing username'))
             if (users[username] != null) cb(ResultModel.WithError('Username already registered'))
 
@@ -193,10 +191,6 @@ ns.on('connection', (socket) => {
             users[username] = newUser
 
             cb(ResultModel.WithContent(newUser))
-
-        } catch (ex) {
-            cb(ResultModel.WithError(ex.message))
-        }
 
     })
 
@@ -251,9 +245,9 @@ ns.on('connection', (socket) => {
              requests[1] = GenerateViewerToken(roomId);
         }
         const tokens = await Promise.all(requests);
-        userAuthenticated.publisherToken = tokens[0];
-        userAuthenticated.viewerToken = tokens[1];
-        cb(ResultModel.WithContent(userAuthenticated));
+        userAuthenticated.publisherToken = tokens[0] || userAuthenticated.publisherToken;
+        userAuthenticated.viewerToken = tokens[1] || userAuthenticated.viewerToken;
+        cb(ResultModel.WithContent(userAuthenticated)); 
 
     })
 
@@ -366,14 +360,12 @@ ns.on('connection', (socket) => {
 
                 const publisherToken = await GeneratePublisherToken(roomId);
 
-                userAuthenticated.publisherToken = publisherToken;
                 selectedUser.publisherToken = publisherToken;
 
                 selectedRoom.speakers.push(selectedUser);
 
             } else {
 
-                userAuthenticated.publisherToken = null;
                 selectedUser.publisherToken = null;
 
                 selectedRoom.members.push(selectedUser);
