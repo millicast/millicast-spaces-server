@@ -10,6 +10,7 @@
   },
   "scripts": {
     "devStart": "nodemon dist/index.js",
+    "watch" : "nodemon  --watch '*.ts' --exec 'ts-node' index.ts",
     "build": "tsc --build tsconfig.json",
     "start": "node dist/index.js"
   },
