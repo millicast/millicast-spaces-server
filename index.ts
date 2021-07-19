@@ -108,7 +108,7 @@ const GenerateViewerToken = async (streamName) => {
 const io = new Server(port, {
     path: path,
     cors: {
-        origin: ['*']
+        origin: ['http://localhost:8100', 'https://millicast.fontventa.com']
     }
 })
 
@@ -175,7 +175,6 @@ ns.on('connection', (socket) => {
     let user: LoginModel = null
 
     socket.on('authenticate', (username: string, cb) => {
-
         try {
 
             if (username == null) cb(ResultModel.WithError('Missing username'))
