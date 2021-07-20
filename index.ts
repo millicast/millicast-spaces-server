@@ -136,8 +136,6 @@ const kickUser = (user: LoginModel) => {
             deleteRoom(room);
         }
 
-        orderRoomUsers(room);
-
         ns.emit('rooms-form', room);
         ns.emit('room-requests-modal', room);
 
@@ -152,29 +150,6 @@ const deleteRoom = (room: RoomModel) => {
     rooms.delete(room.Id)
 
     ns.emit('rooms-list', Array.from(rooms.values()));
-
-}
-
-const orderRoomUsers = (room: RoomModel) => {
-
-    room.members = orderByUserName(room.members);
-    room.speakers = orderByUserName(room.speakers);
-
-}
-
-const orderByUserName = (userList: LoginModel[]) => {
-
-    return userList.sort(function (a, b) {
-
-        if (a.user > b.user) {
-            return 1;
-        }
-        if (a.user < b.user) {
-            return -1;
-        }
-
-        return 0;
-    });
 
 }
 
@@ -329,8 +304,6 @@ ns.on('connection', (socket) => {
                 room.members.push(user);
             }
 
-            orderRoomUsers(room);
-
             ns.emit('rooms-list', Array.from(rooms.values()));
             ns.emit('rooms-form', room);
             ns.emit('room-requests-modal', room);
@@ -406,8 +379,6 @@ ns.on('connection', (socket) => {
                 //Add to audience
                 room.members.push(selectedUser);
             }
-
-            orderRoomUsers(room);
 
             ns.emit('rooms-form', room);
             ns.emit('room-requests-modal', room);
