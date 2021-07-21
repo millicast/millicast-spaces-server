@@ -382,6 +382,7 @@ ns.on('connection', (socket) => {
 
             ns.emit('rooms-form', room);
             ns.emit('room-requests-modal', room);
+            ns.emit('rooms-list', Array.from(Array.from(rooms.values())));
 
             cb(ResultModel.WithContent(null));
 
