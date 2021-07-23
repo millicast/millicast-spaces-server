@@ -306,7 +306,6 @@ ns.on('connection', (socket) => {
 
             ns.emit('rooms-list', Array.from(rooms.values()));
             ns.emit('rooms-form', room);
-            ns.emit('room-requests-modal', room);
 
             const response = await Promise.all(requests);
 
@@ -333,8 +332,7 @@ ns.on('connection', (socket) => {
 
             selectedUser.pendingRequest = cancel;
 
-            ns.emit('room-requests-list', room);
-            ns.emit('room-requests-modal', room);
+            ns.emit('room-requests-list', room, selectedUser);
 
             cb(ResultModel.WithContent(null));
 
@@ -381,7 +379,6 @@ ns.on('connection', (socket) => {
             }
 
             ns.emit('rooms-form', room);
-            ns.emit('room-requests-modal', room);
             ns.emit('rooms-list', Array.from(Array.from(rooms.values())));
 
             cb(ResultModel.WithContent(null));
