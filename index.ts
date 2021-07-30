@@ -119,7 +119,7 @@ const GenerateViewerToken = async (streamName) => {
 const io = new Server(port, {
     path: path,
     cors: {
-        origin: ['http://localhost:8100', 'http://10.10.11.24:8100', 'https://millicast.fontventa.com']
+        origin: ['http://localhost:8100', 'http://localhost', 'ionic://localhost', 'http://10.10.11.24:8100', 'https://millicast.fontventa.com']
     }
 })
 
