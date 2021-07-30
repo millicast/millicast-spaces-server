@@ -119,7 +119,7 @@ const GenerateViewerToken = async (streamName) => {
 const io = new Server(port, {
     path: path,
     cors: {
-        origin: ['http://localhost:8100', 'https://millicast.fontventa.com']
+        origin: ['http://localhost:8100', 'http://10.10.11.24:8100', 'https://millicast.fontventa.com']
     }
 })
 
@@ -383,6 +383,57 @@ ns.on('connection', (socket) => {
 
             cb(ResultModel.WithContent(null));
 
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
+    })
+
+    socket.on('eject-from-room', async (roomId: string, usrId: string, cb) => {
+
+        try {
+
+            if (!user) cb(ResultModel.WithError('Not authenticated'))
+
+            const room = rooms.get(roomId)
+            const selectedUser = room.members.filter(f => f.id == usrId)[0] || room.speakers.filter(f => f.id == usrId)[0]
+
+            // Find client for ejected user
+            const socket = clients.get(usrId)
+
+            room.members = room.members.filter(f => f.id != selectedUser.id)
+            room.speakers = room.speakers.filter(f => f.id != selectedUser.id)
+
+            socket.emit("user-ejected", room)
+
+            ns.emit('rooms-form', room)
+            ns.emit('rooms-list', Array.from(Array.from(rooms.values())))
+
+            cb(ResultModel.WithContent(null))
+
+        } catch (ex) {
+            cb(ResultModel.WithError(ex.message))
+        }
+
+    })
+
+    socket.on('mute-speaker', async (roomId: string, usrId: string, cb) => {
+
+        try {
+
+            if (!user) cb(ResultModel.WithError('Not authenticated'))
+
+            const room = rooms.get(roomId)
+
+            // Find client for muted user
+            const socket = clients.get(usrId)
+
+            console.log('Send mute to ' + usrId)
+
+            socket.emit('user-muted', room)
+
+            cb(ResultModel.WithContent(null))
 
         } catch (ex) {
             cb(ResultModel.WithError(ex.message))
