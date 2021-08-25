@@ -1,20 +1,19 @@
 {
-  "dependencies": {
-    "@millicast/sdk": "^0.1.7",
-    "config": "^3.3.6",
-    "debug": "^4.3.2",
-    "node-fetch": "^2.6.1",
-    "socket.io": "^4.1.2",
-    "uuidv4": "^6.2.11",
-    "xmlhttprequest": "^1.8.0"
-  },
-  "scripts": {
-    "devStart": "nodemon dist/index.js",
-    "watch": "nodemon  --watch '*.ts' --exec 'ts-node' index.ts",
-    "build": "tsc --build tsconfig.json",
-    "start": "node dist/index.js"
-  },
-  "devDependencies": {
-    "typescript": "^4.3.5"
-  }
+	"dependencies": {
+		"@millicast/sdk": "^0.1.7",
+		"config": "^3.3.6",
+		"debug": "^4.3.2",
+		"node-fetch": "^2.6.1",
+		"socket.io": "^4.1.2",
+		"uuidv4": "^6.2.11",
+		"xmlhttprequest": "^1.8.0"
+	},
+	"type": "module",
+	"scripts": {
+		"watch": "nodemon  --watch '*.js' --exec 'node' index.js",
+		"start": "node index.js"
+	},
+	"devDependencies": {
+		"typescript": "^4.3.5"
+	}
 }
