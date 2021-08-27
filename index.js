@@ -6,24 +6,13 @@ import { Room } from "./lib/Room.js"
 
 class Result
 {
-	static WithContent(content)
+	static WithContent(data)
 	{
-		return {
-			Error: {
-				HasError: false,
-				Message: ""
-			},
-			content
-		};
+		return {data};
 	}
-	static WithError(message)
+	static WithError(error)
 	{
-		return {
-			Error: {
-				HasError: true,
-				Message: message
-			}
-		}
+		return {error}
 	}
 }
 
@@ -44,16 +33,15 @@ const io = new Server(port, {
 	}
 })
 
-const ns = io.of(namespace)
+const ns = io.of(namespace);
+const spaces = ns.to("spaces");
 
-const mainLogger = new Logger("connections");
+const mainLogger = new Logger("spaces");
 
 ns.on("connection", (socket) =>
 {
 	let user = null
-	let logger = connectionsLogger.child(socket.id);
-
-	mainLogger.info("connected");
+	let logger = null;
 
 	//Add client to map
 	clients.set(socket.id, socket);
@@ -66,11 +54,13 @@ ns.on("connection", (socket) =>
 			if (username == null)
 				return cb(Result.WithError("Missing username"));
 			//Check not duplicated username
-			if (users.has(username) != null)
+			if (users.has(username))
 				return cb(Result.WithError("Username already registered"));
 
 			//Create logger
 			logger = mainLogger.child(username);
+
+			logger.info("authenticated");
 
 			//Create user and assing the socket id as identifier
 			user = {
@@ -80,11 +70,13 @@ ns.on("connection", (socket) =>
 
 			//Add user
 			users.set(username,user);
+			//Join to default room
+			socket.join("spaces");
 			//Done
-			cb(Result.WithContent({user,rooms}));
+			cb(Result.WithContent({user,rooms: Array.from(rooms.values()).map(r=>r.toJson())}));
 
 		} catch (ex) {
-			logger.error("authenticated as %s", username);
+			logger.error(ex);
 			cb(Result.WithError(ex.message));
 		}
 	})
@@ -103,14 +95,15 @@ ns.on("connection", (socket) =>
 		for (const room of rooms.values())
 		{
 			//Try removing participant from room
-			if (room.removeParticipant(user))
+			if (room.removeParticipant(user.id))
 				//Send event
-				ns.emit("user-left",{roomId:joined.id, userId:user.id});
+				spaces.emit("user-left", room.id, user.id);
 			//If not participant left
 			if (room.empty())
 			{
 				rooms.delete(room.id)
-				ns.emit("room-deleted", {roomId:room.id});
+				spaces.emit("room-deleted", room.id);
+				mainLogger.info("Room deleted %s", room.id);
 			}
 		}
 
@@ -131,12 +124,15 @@ ns.on("connection", (socket) =>
 
 			rooms.set(room.id, room)
 
-			ns.emit("room-created", room.toJson());
+			mainLogger.info("Room created %s", room.id);
+
+			spaces.emit("room-created", room.toJson());
 
 			cb(Result.WithContent(room.id))
-
+			
 		} catch (ex) {
-			cb(Result.WithError(ex.message))
+			logger.error(ex);
+			cb(Result.WithError(ex.message));
 		}
 	})
 
@@ -152,23 +148,25 @@ ns.on("connection", (socket) =>
 
 			if (!room) return cb(Result.WithError("Room does not exist"))
 
-			room.removeParticipant(user);
+			room.removeParticipant(user.id);
+
+			//Remove user from socket.io room
+			socket.leave(roomId);
 
 			cb(Result.WithContent(null));
 
 			//Emit event
-			ns.emit("user-left", {
-				roomId: joined.id,
-				user  : user
-			});
-
+			spaces.emit("user-left", room.id, user.id);
+			console.dir(room,{depth:null});
 			//If not participant left
 			if (room.empty())
 			{
 				rooms.delete(room.id)
-				ns.emit("room-deleted", {roomId:room.id});
+				spaces.emit("room-deleted", room.id);
+				mainLogger.info("Room deleted %s", room.id);
 			}
 		} catch (ex) {
+			logger.error(ex);	
 			cb(Result.WithError(ex.message))
 		}
 	})
@@ -178,7 +176,6 @@ ns.on("connection", (socket) =>
 		try
 		{
 			if (!user)  return cb(Result.WithError("Not authenticated"))
-			if (joined) return cb(Result.WithError("User already in a room"))
 
 			logger.info("joining room %s", roomId);
 
@@ -186,6 +183,9 @@ ns.on("connection", (socket) =>
 			const room = rooms.get(roomId);
 
 			if (!room) return cb(Result.WithError("Room does not exist"))
+
+			//Add user
+			room.addParticipant(user);
 
 			const requests = [generateViewerToken(roomId)];
 			if (room.ownerId == user.id)
@@ -195,15 +195,23 @@ ns.on("connection", (socket) =>
 
 			const tokens = {viewerToken,publisherToken}
 
-			cb(Result.WithContent({ room, tokens }));
+			//Join user to socket.io room
+			socket.join(roomId);
 
 			//Emit event
-			ns.emit("user-joined", room.id, user);
+			spaces.emit("user-joined", room.id, user);
 
 			if (room.ownerId == user.id)
-				ns.emit("user-promoted",{roomId, userId, promoted});
+			{
+				//Add user as speaker too
+				room.addSpeaker(user.id);
+				spaces.emit("user-promoted", roomId, user.id, true);
+			}
+
+			cb(Result.WithContent(tokens));
 
 		} catch (ex) {
+			logger.error(ex);
 			cb(Result.WithError(ex.message))
 		}
 
@@ -226,13 +234,10 @@ ns.on("connection", (socket) =>
 			cb(Result.WithContent(null));
 
 			//Emit the event to room only
-			io.to(roomId).emit("user-raised-hand",{
-				roomId : room.id,
-				userId : user.id,
-				raised : raised
-			});
+			ns.to(roomId).emit("user-raised-hand", room.id, user.id, raised);
 
 		} catch (ex) {
+			logger.error(ex);
 			cb(Result.WithError(ex.message))
 		}
 
@@ -247,37 +252,47 @@ ns.on("connection", (socket) =>
 			const room = rooms.get(roomId);
 
 			if (!room) return cb(Result.WithError("Room does not exist"))
+			if (room.ownerId!=user.id)  return cb(Result.WithError("You are not the owner of the room"))
 			
 			if (!room.promoteParticipant(userId, promoted))
-				 return cb(Result.WithError("Error"))
+			{
+				//If we were rejecting a promotion
+				if (!promoted)
+					//Signal hand lowered to room only
+					ns.to(roomId).emit("user-raised-hand", roomId, userId, false);
+				return cb(Result.WithContent(null));
+			}
 
 			//Find client for promoted user
 			const socket = clients.get(userId);
 
 			if (promoted)
 			{
-				logger.info("promoting user:%s in room:%s", usrId, roomId);
+				logger.info("promoting user:%s in room:%s", userId, roomId);
 				//Get token
-				GeneratePublisherToken(roomId).then((publisherToken) => {
+				generatePublisherToken(roomId).then((publisherToken) => {
 					//Tokens
 					const tokens = {publisherToken};
 					//Emit token only to the promoted user
 					socket.emit("promoted", roomId, tokens);
 				});
 			} else {
-				logger.info("demoting user:%s in room:%s", usrId, roomId);
+				logger.info("demoting user:%s in room:%s", userId, roomId);
+				//Emit token only to the demoted
+				socket.emit("demoted", roomId);
 			}
 
 			cb(Result.WithContent(null));
 
-			ns.emit("user-promoted",{roomId, userId, promoted});
+			spaces.emit("user-promoted",roomId, userId, promoted);
 
 		} catch (ex) {
+			logger.error(ex);
 			cb(Result.WithError(ex.message))
 		}
 	})
 
-	socket.on("kick-user", async (roomId, userId, promoted, cb) =>
+	socket.on("kick-user", async (roomId, userId, cb) =>
 	{
 		try
 		{
@@ -286,26 +301,38 @@ ns.on("connection", (socket) =>
 			const room = rooms.get(roomId);
 
 			if (!room) return cb(Result.WithError("Room does not exist"))
+			if (room.ownerId!=user.id)  return cb(Result.WithError("You are not the owner of the room"))
 			
-			if (!room.removeParticipant(userId, promoted))
-				return cb(Result.WithError("Error"))
+			room.removeParticipant(userId);
 
 			//Find client for promoted user
 			const socket = clients.get(userId);
+
+			//Remove user from socket.io room
+			socket.leave(roomId);
 
 			//Emit token only to the kicked user
 			socket.emit("kicked", roomId);
 
 			cb(Result.WithContent(null));
 
-			ns.emit("user-left",{roomId, userId});
+			spaces.emit("user-left",roomId, userId);
+
+			//If no participant left
+			if (room.empty())
+			{
+				rooms.delete(room.id)
+				spaces.emit("room-deleted", room.id);
+				mainLogger.info("Room deleted %s", room.id);
+			}
 
 		} catch (ex) {
+			logger.error(ex);
 			cb(Result.WithError(ex.message))
 		}
 	})
 
-	socket.on("mute-user", async (roomId, userId, cb) =>
+	socket.on("mute-speaker", async (roomId, userId, cb) =>
 	{
 		try
 		{
@@ -314,9 +341,10 @@ ns.on("connection", (socket) =>
 			const room = rooms.get(roomId);
 
 			if (!room) return cb(Result.WithError("Room does not exist"))
+			if (room.ownerId!=user.id)  return cb(Result.WithError("You are not the owner of the room"))
 			
-			if (!room.muteSpeaker(userId, true))
-				return cb(Result.WithError("Error"))
+			//Mute
+			room.muteSpeaker(userId, true);
 
 			//Find client for promoted user
 			const socket = clients.get(userId);
@@ -326,14 +354,15 @@ ns.on("connection", (socket) =>
 
 			cb(Result.WithContent(null));
 
-			io.to(roomId).emit("user-muted",{roomId, userId, muted});
+			ns.to(roomId).emit("user-muted",roomId, userId, true);
 
 		} catch (ex) {
+			logger.error(ex);
 			cb(Result.WithError(ex.message))
 		}
 	});
 
-	socket.on("mute", async (roomId, userId, muted, cb) => {
+	socket.on("mute", async (roomId, muted, cb) => {
 		try
 		{
 			if (!user) cb(Result.WithError("Not authenticated"))
@@ -342,14 +371,15 @@ ns.on("connection", (socket) =>
 
 			if (!room) return cb(Result.WithError("Room does not exist"))
 			
-			if (!room.muteSpeaker(userId, muted))
-				return cb(Result.WithError("Error"))
+			//Mute
+			room.muteSpeaker(user.id, muted);
 
 			cb(Result.WithContent(null));
 
-			io.to(roomId).emit("user-muted",{roomId, userId, muted});
+			ns.to(roomId).emit("user-muted",roomId, user.id, muted);
 
 		} catch (ex) {
+			logger.error(ex);
 			cb(Result.WithError(ex.message))
 		}
 	});
