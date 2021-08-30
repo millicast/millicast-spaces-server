@@ -157,7 +157,6 @@ ns.on("connection", (socket) =>
 
 			//Emit event
 			spaces.emit("user-left", room.id, user.id);
-			console.dir(room,{depth:null});
 			//If not participant left
 			if (room.empty())
 			{
